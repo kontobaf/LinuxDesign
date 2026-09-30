@@ -5,6 +5,7 @@ gi.require_version("Gdk", "4.0")
 from gi.repository import Gtk, Gdk, GLib
 
 from Xlib import X, display as xdisplay, Xatom
+from Xlib import Xutil
 import time
 
 
