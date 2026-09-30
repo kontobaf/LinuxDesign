@@ -7,6 +7,7 @@ from gi.repository import Gtk, Gdk, GLib
 from Xlib import X, display as xdisplay, Xatom
 from Xlib import Xutil
 import time
+import Xlib.protocol.event
 
 
 CSS = b"""
@@ -39,23 +40,20 @@ def make_it_a_panel(xid: int):
       - не в списке задач
       - не в alt-tab
       - не в pager
-      - всегда поверх
+      - всегда поверх (через client message)
       - не двигается и не ресайзится WM-ом
     """
     d = xdisplay.Display()
     root = d.screen().root
     win = d.create_resource_object("window", xid)
 
-    def set_atom(name, value_type, value):
-        atom = d.intern_atom(name)
-        win.change_property(atom, value_type, 32, value)
-
-    # _NET_WM_WINDOW_TYPE = _NET_WM_WINDOW_TYPE_DOCK
+    # --- Тип окна: DOCK ---
     wm_type = d.intern_atom("_NET_WM_WINDOW_TYPE")
     wm_type_dock = d.intern_atom("_NET_WM_WINDOW_TYPE_DOCK")
     win.change_property(wm_type, Xatom.ATOM, 32, [wm_type_dock])
 
-    # _NET_WM_STATE = ABOVE + STICKY + SKIP_TASKBAR + SKIP_PAGER
+    # --- Состояние: ABOVE + STICKY + SKIP_TASKBAR + SKIP_PAGER ---
+    # 1) Прямое выставление атома
     wm_state = d.intern_atom("_NET_WM_STATE")
     states = [
         d.intern_atom("_NET_WM_STATE_ABOVE"),
@@ -65,19 +63,37 @@ def make_it_a_panel(xid: int):
     ]
     win.change_property(wm_state, Xatom.ATOM, 32, states)
 
-    # Запрещаем WM трогать размер и позицию
+    # 2) Client message к WM: попросить добавить ABOVE
+    #    _NET_WM_STATE_ADD = 1
+    data = [
+        1,  # действие: ADD
+        d.intern_atom("_NET_WM_STATE_ABOVE"),
+        0, 0, 0
+    ]
+    ev = Xlib.protocol.event.ClientMessage(
+        window=win,
+        client_type=wm_state,
+        data=(32, data),
+    )
+    mask = X.SubstructureRedirectMask | X.SubstructureNotifyMask
+    root.send_event(ev, event_mask=mask)
+
+    # --- Запрещаем WM трогать размер и позицию ---
     hints = win.get_wm_normal_hints()
     hints.flags |= (
         Xutil.PMinSize | Xutil.PMaxSize
         | Xutil.PPosition | Xutil.PWinGravity
     )
-    hints.min_width = hints.max_width = win.get_geometry().width
-    hints.min_height = hints.max_height = win.get_geometry().height
+    geom = win.get_geometry()
+    hints.min_width = hints.max_width = geom.width
+    hints.min_height = hints.max_height = geom.height
     win.set_wm_normal_hints(hints)
+
+    # --- Дополнительно: поднимаем окно сразу ---
+    win.configure(stack_mode=X.Above)
 
     d.sync()
     d.close()
-
 
 def position_bottom_center(xid: int):
     """Ставим окно внизу по центру экрана через X11."""
