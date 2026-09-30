@@ -68,8 +68,8 @@ def make_it_a_panel(xid: int):
     # Запрещаем WM трогать размер и позицию
     hints = win.get_wm_normal_hints()
     hints.flags |= (
-        Xlib.Xutil.PMinSize | Xlib.Xutil.PMaxSize
-        | Xlib.Xutil.PPosition | Xlib.Xutil.PWinGravity
+        Xutil.PMinSize | Xutil.PMaxSize
+        | Xutil.PPosition | Xutil.PWinGravity
     )
     hints.min_width = hints.max_width = win.get_geometry().width
     hints.min_height = hints.max_height = win.get_geometry().height
