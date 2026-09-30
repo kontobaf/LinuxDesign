@@ -4,6 +4,10 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gtk, Gdk, GLib
 
+from Xlib import X, display as xdisplay, Xatom
+import time
+
+
 CSS = b"""
 window.dock-window {
     background: transparent;
@@ -26,6 +30,76 @@ window.dock-window {
 """
 
 
+# ---------- X11 EWMH-хуки ----------
+
+def make_it_a_panel(xid: int):
+    """
+    Настраиваем окно как панель через EWMH:
+      - не в списке задач
+      - не в alt-tab
+      - не в pager
+      - всегда поверх
+      - не двигается и не ресайзится WM-ом
+    """
+    d = xdisplay.Display()
+    root = d.screen().root
+    win = d.create_resource_object("window", xid)
+
+    def set_atom(name, value_type, value):
+        atom = d.intern_atom(name)
+        win.change_property(atom, value_type, 32, value)
+
+    # _NET_WM_WINDOW_TYPE = _NET_WM_WINDOW_TYPE_DOCK
+    wm_type = d.intern_atom("_NET_WM_WINDOW_TYPE")
+    wm_type_dock = d.intern_atom("_NET_WM_WINDOW_TYPE_DOCK")
+    win.change_property(wm_type, Xatom.ATOM, 32, [wm_type_dock])
+
+    # _NET_WM_STATE = ABOVE + STICKY + SKIP_TASKBAR + SKIP_PAGER
+    wm_state = d.intern_atom("_NET_WM_STATE")
+    states = [
+        d.intern_atom("_NET_WM_STATE_ABOVE"),
+        d.intern_atom("_NET_WM_STATE_STICKY"),
+        d.intern_atom("_NET_WM_STATE_SKIP_TASKBAR"),
+        d.intern_atom("_NET_WM_STATE_SKIP_PAGER"),
+    ]
+    win.change_property(wm_state, Xatom.ATOM, 32, states)
+
+    # Запрещаем WM трогать размер и позицию
+    hints = win.get_wm_normal_hints()
+    hints.flags |= (
+        Xlib.Xutil.PMinSize | Xlib.Xutil.PMaxSize
+        | Xlib.Xutil.PPosition | Xlib.Xutil.PWinGravity
+    )
+    hints.min_width = hints.max_width = win.get_geometry().width
+    hints.min_height = hints.max_height = win.get_geometry().height
+    win.set_wm_normal_hints(hints)
+
+    d.sync()
+    d.close()
+
+
+def position_bottom_center(xid: int):
+    """Ставим окно внизу по центру экрана через X11."""
+    d = xdisplay.Display()
+    root = d.screen().root
+    win = d.create_resource_object("window", xid)
+
+    geom = win.get_geometry()
+    w, h = geom.width, geom.height
+
+    screen_w = d.screen().width_in_pixels
+    screen_h = d.screen().height_in_pixels
+
+    x = (screen_w - w) // 2
+    y = screen_h - h - 20  # 20 px отступ от низа
+
+    win.configure(x=x, y=y)
+    d.sync()
+    d.close()
+
+
+# ---------- GTK ----------
+
 class DockWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app)
@@ -33,16 +107,9 @@ class DockWindow(Gtk.ApplicationWindow):
         self.set_decorated(False)
         self.set_resizable(False)
         self.set_default_size(520, 60)
-
-        # Прозрачный фон окна
         self.add_css_class("dock-window")
-
-        # Всегда поверх и не забирает фокус
-        # (в GTK4 это делается через свойства окна; полный "always on top"
-        # через X11 EWMH сделаем позже, когда прикрутим позиционирование)
         self.set_can_focus(False)
 
-        # Контейнер: пока просто placeholder внутри островка
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         box.set_halign(Gtk.Align.CENTER)
         box.set_valign(Gtk.Align.CENTER)
@@ -57,24 +124,28 @@ class DockWindow(Gtk.ApplicationWindow):
         box.append(island)
         self.set_child(box)
 
-    def move_to_bottom_center(self):
-        """Позиционируем окно внизу по центру экрана."""
-        display = Gdk.Display.get_default()
-        monitors = display.get_monitors()
-        if monitors.get_n_items() == 0:
-            return
-        monitor = monitors.get_item(0)
-        geo = monitor.get_geometry()
+    def setup_x11(self):
+        """Получаем XID окна и применяем X11-настройки."""
+        surface = self.get_surface()
+        if surface is None:
+            return False
 
-        # Получаем реальный размер окна после отрисовки
-        width, height = self.get_default_size()
-        x = geo.x + (geo.width - width) // 2
-        y = geo.y + geo.height - height - 20  # 20 px отступ от низа
+        # В GTK4 на X11 XID достаётся через GdkX11
+        try:
+            gi.require_version("GdkX11", "4.0")
+            from gi.repository import GdkX11
+            x11_surface = surface
+            xid = GdkX11.X11Surface.get_xid(x11_surface)
+        except Exception as e:
+            print("[dock] не удалось получить XID:", e)
+            return False
 
-        # В GTK4 прямого API для позиционирования топа нет,
-        # поэтому используем X11-хак через GLib (см. ниже — сделаем позже).
-        # Пока окно появится там, где его поставит WM.
-        print(f"[dock] монитор: {geo.width}x{geo.height}, цель x={x}, y={y}")
+        print(f"[dock] XID = {xid}")
+        make_it_a_panel(xid)
+
+        # Небольшая задержка, чтобы WM применил свойства, затем позиционируем
+        GLib.timeout_add(200, lambda: (position_bottom_center(xid), False)[1])
+        return False
 
 
 class DockApp(Gtk.Application):
@@ -84,20 +155,23 @@ class DockApp(Gtk.Application):
     def do_activate(self):
         win = DockWindow(self)
         win.present()
-        GLib.timeout_add(100, lambda: (win.move_to_bottom_center(), False)[1])
+        # Даём GTK отрисовать окно и создать surface
+        GLib.timeout_add(150, win.setup_x11)
 
 
 def main():
-    # Загружаем CSS
     provider = Gtk.CssProvider()
     provider.load_from_data(CSS)
 
     app = DockApp()
-    app.connect("startup", lambda a: Gtk.StyleContext.add_provider_for_display(
-        Gdk.Display.get_default(),
-        provider,
-        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-    ))
+    app.connect(
+        "startup",
+        lambda a: Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        ),
+    )
     app.run(None)
 
 
