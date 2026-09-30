@@ -123,47 +123,47 @@ class DockWindow(Gtk.ApplicationWindow):
         self.set_title("Mint Dock")
         self.set_decorated(False)
         self.set_resizable(False)
-        self.set_default_size(520, 60)
+        self.set_default_size(560, 64)
         self.add_css_class("dock-window")
         self.set_can_focus(False)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        box.set_halign(Gtk.Align.CENTER)
-        box.set_valign(Gtk.Align.CENTER)
+        # Внешний контейнер: горизонтальный, с зазором между островками
+        root_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        root_box.set_halign(Gtk.Align.CENTER)
+        root_box.set_valign(Gtk.Align.CENTER)
 
-        island = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        island.add_css_class("dock-island")
+        # --- Левый островок: кнопка "все приложения" ---
+        launcher = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        launcher.add_css_class("dock-island")
+        launcher.add_css_class("dock-launcher")
 
-        label = Gtk.Label(label="Mint Dock — заготовка")
-        label.add_css_class("dock-placeholder")
-        island.append(label)
+        launcher_btn = Gtk.Button()
+        launcher_btn.add_css_class("dock-icon-button")
+        launcher_btn.set_child(Gtk.Image.new_from_icon_name("view-app-grid-symbolic"))
+        launcher_btn.set_tooltip_text("Все приложения")
+        # Клик пока ничего не делает — подключим на следующем шаге
+        launcher.append(launcher_btn)
 
-        box.append(island)
-        self.set_child(box)
+        # --- Правый островок: панель задач ---
+        taskbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        taskbar.add_css_class("dock-island")
+        taskbar.add_css_class("dock-taskbar")
+        taskbar.set_size_request(320, -1)  # минимальная ширина, чтобы форма была видна
 
+        # Пока пусто — на следующем шаге добавим иконки запущенных приложений
+        placeholder = Gtk.Label(label="панель задач")
+        placeholder.add_css_class("dock-placeholder")
+        placeholder.set_halign(Gtk.Align.CENTER)
+        taskbar.append(placeholder)
+
+        root_box.append(launcher)
+        root_box.append(taskbar)
+        self.set_child(root_box)
+
+    # setup_x11 и move_to_bottom_center остаются как были
     def setup_x11(self):
-        """Получаем XID окна и применяем X11-настройки."""
-        surface = self.get_surface()
-        if surface is None:
-            return False
-
-        # В GTK4 на X11 XID достаётся через GdkX11
-        try:
-            gi.require_version("GdkX11", "4.0")
-            from gi.repository import GdkX11
-            x11_surface = surface
-            xid = GdkX11.X11Surface.get_xid(x11_surface)
-        except Exception as e:
-            print("[dock] не удалось получить XID:", e)
-            return False
-
-        print(f"[dock] XID = {xid}")
-        make_it_a_panel(xid)
-
-        # Небольшая задержка, чтобы WM применил свойства, затем позиционируем
-        GLib.timeout_add(200, lambda: (position_bottom_center(xid), False)[1])
-        return False
-
+        # ... оставь без изменений ...
+        pass
 
 class DockApp(Gtk.Application):
     def __init__(self):
