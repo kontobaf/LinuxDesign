@@ -422,7 +422,7 @@ class Item:
 class Dock(QWidget):
     def __init__(self, apps):
         super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
-                         | Qt.WindowType.Tool | Qt.WindowType.WindowDoesNotAcceptFocus)
+                         | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setMouseTracking(True)
@@ -441,18 +441,25 @@ class Dock(QWidget):
                 print("X11 недоступен:", ex, file=sys.stderr)
 
         self.relayout()
-        wid = int(self.winId())            # создаём нативное окно до show()
-        if self.wm:
-            scr = QApplication.primaryScreen()
-            strut = int((ISLAND_H + BOTTOM_MARGIN + 6) * scr.devicePixelRatio())
-            try:
-                self.wm.make_dock(wid, strut, int(scr.size().width() * scr.devicePixelRatio()))
-            except Exception as ex:
-                print("make_dock:", ex, file=sys.stderr)
+        self.apply_dock_hints()            # до show()
+        # Qt перезаписывает тип окна при показе — ставим DOCK ещё раз после
+        for ms in (150, 600, 2000):
+            QTimer.singleShot(ms, self.apply_dock_hints)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(350)
+
+    def apply_dock_hints(self):
+        if not self.wm:
+            return
+        scr = QApplication.primaryScreen()
+        dpr = scr.devicePixelRatio()
+        try:
+            self.wm.make_dock(int(self.winId()), int((ISLAND_H + BOTTOM_MARGIN + 6) * dpr),
+                              int(scr.size().width() * dpr))
+        except Exception as ex:
+            print("make_dock:", ex, file=sys.stderr)
 
     # --- геометрия
     @property
